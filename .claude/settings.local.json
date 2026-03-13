@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x /Users/arcadas/git/npm-scripts-auto-complete/bin/nac.js)",
+      "Bash(node /Users/arcadas/git/npm-scripts-auto-complete/bin/nac.js help)",
+      "Bash(node /Users/arcadas/git/npm-scripts-auto-complete/bin/nac.js status)",
+      "Bash(node /Users/arcadas/git/npm-scripts-auto-complete/bin/postinstall.js)",
+      "Bash(npm install:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "WebFetch(domain:api.npms.io)",
+      "WebFetch(domain:api.npmjs.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm view:*)",
+      "Bash(git config:*)",
+      "Bash(npm pack:*)"
+    ]
+  }
+}

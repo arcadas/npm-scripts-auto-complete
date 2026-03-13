@@ -1,0 +1,39 @@
+{
+  "name": "npm-scripts-auto-complete",
+  "version": "1.0.0",
+  "description": "Zero-config shell tab-completion for `npm run` scripts, auto-installed from package.json",
+  "keywords": [
+    "npm",
+    "autocomplete",
+    "completion",
+    "scripts",
+    "zsh",
+    "bash",
+    "tab-completion",
+    "cli",
+    "macos"
+  ],
+  "author": "Peter Perger <perger1984@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/arcadas/npm-scripts-auto-complete#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arcadas/npm-scripts-auto-complete.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arcadas/npm-scripts-auto-complete/issues"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "bin": {
+    "nac": "bin/nac.js"
+  },
+  "scripts": {
+    "postinstall": "node bin/postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "completions/"
+  ]
+}
