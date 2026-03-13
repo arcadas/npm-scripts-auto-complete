@@ -88,11 +88,22 @@ function installMac() {
       break;
     }
   }
+  let bashInstalled = null;
   for (const dir of bashDirs) {
     if (tryCopy(COMPLETIONS.bash, dir, 'npm-scripts-auto-complete')) {
-      results.push(`  bash: ${dir}/npm-scripts-auto-complete`);
+      bashInstalled = path.join(dir, 'npm-scripts-auto-complete');
       break;
     }
+  }
+
+  // Always add a direct source line to ~/.bash_profile so bash completion works
+  // regardless of whether Homebrew's bash-completion package is configured.
+  const bashRc = rcFile('bash');
+  const sourceLine = `source "${bashInstalled || COMPLETIONS.bash}"`;
+  if (appendWithMarkers(bashRc, sourceLine)) {
+    results.push(`  bash: source line added to ${bashRc}`);
+  } else {
+    results.push(`  bash: already in ${bashRc}`);
   }
 
   return results;

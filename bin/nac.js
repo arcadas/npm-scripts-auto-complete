@@ -172,9 +172,12 @@ function cmdStatus() {
     }
     const bashRc = rcFile('bash');
 
-    if (bashFile) {
-      console.log(`  bash: installed → ${bashFile}`);
-    } else if (hasMarker(bashRc)) {
+    const bashRcHasMarker = hasMarker(bashRc);
+    if (bashFile && bashRcHasMarker) {
+      console.log(`  bash: installed → ${bashFile} (sourced from ${bashRc})`);
+    } else if (bashFile && IS_MAC && !bashRcHasMarker) {
+      console.log(`  bash: file present but NOT sourced — run: nac setup`);
+    } else if (bashRcHasMarker) {
       console.log(`  bash: source line in ${bashRc}`);
     } else {
       console.log('  bash: not installed');
@@ -226,32 +229,41 @@ function cmdSetup() {
     }
     if (zshDone) anyOk = true;
 
-    // bash
-    let bashDone = false;
-    const userBashDir = path.join(home, '.local/share/bash-completion/completions');
-    if (tryWrite(userBashDir, 'npm-scripts-auto-complete', fs.readFileSync(COMPLETIONS.bash, 'utf8'))) {
-      console.log(`  bash: ${userBashDir}/npm-scripts-auto-complete`);
-      bashDone = true;
-    }
-    if (!bashDone) {
+    // bash — copy to completion dir, then always add a source line to the rc
+    // file so it works regardless of whether bash-completion is configured.
+    let bashInstalled = null;
+    if (IS_MAC) {
       for (const dir of getBashDirs()) {
         if (tryCopy(COMPLETIONS.bash, dir, 'npm-scripts-auto-complete')) {
-          console.log(`  bash: copied → ${dir}/npm-scripts-auto-complete`);
-          bashDone = true;
+          bashInstalled = path.join(dir, 'npm-scripts-auto-complete');
+          console.log(`  bash: copied → ${bashInstalled}`);
           break;
         }
       }
-    }
-    if (!bashDone) {
-      const rc = rcFile('bash');
-      if (appendWithMarkers(rc, `source "${COMPLETIONS.bash}"`)) {
-        console.log(`  bash: source line added to ${rc}`);
+    } else {
+      const userBashDir = path.join(home, '.local/share/bash-completion/completions');
+      if (tryWrite(userBashDir, 'npm-scripts-auto-complete', fs.readFileSync(COMPLETIONS.bash, 'utf8'))) {
+        bashInstalled = path.join(userBashDir, 'npm-scripts-auto-complete');
+        console.log(`  bash: ${bashInstalled}`);
       } else {
-        console.log(`  bash: already in ${rc}`);
+        for (const dir of getBashDirs()) {
+          if (tryCopy(COMPLETIONS.bash, dir, 'npm-scripts-auto-complete')) {
+            bashInstalled = path.join(dir, 'npm-scripts-auto-complete');
+            console.log(`  bash: copied → ${bashInstalled}`);
+            break;
+          }
+        }
       }
-      bashDone = true;
     }
-    if (bashDone) anyOk = true;
+
+    const bashRc = rcFile('bash');
+    const bashSource = `source "${bashInstalled || COMPLETIONS.bash}"`;
+    if (appendWithMarkers(bashRc, bashSource)) {
+      console.log(`  bash: source line added to ${bashRc}`);
+    } else {
+      console.log(`  bash: already in ${bashRc}`);
+    }
+    anyOk = true;
   }
 
   if (anyOk) {
