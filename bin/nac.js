@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// nac — utility CLI for npm-scripts-auto-complete
+// nac — npm-scripts-auto-complete utility
 //
 // Normally you don't need this: `npm install -g` runs postinstall automatically.
-// Use `nac setup` only if postinstall couldn't find a writable directory.
+// Use `nac setup` only if postinstall couldn't write to a completion directory.
 
 const { execSync } = require('child_process');
 const fs = require('fs');
@@ -12,10 +12,18 @@ const path = require('path');
 const os = require('os');
 
 const PACKAGE_DIR = path.resolve(__dirname, '..');
-const ZSH_SRC  = path.join(PACKAGE_DIR, 'completions', 'npm-scripts.zsh');
-const BASH_SRC = path.join(PACKAGE_DIR, 'completions', 'npm-scripts.bash');
+const COMPLETIONS = {
+  zsh:  path.join(PACKAGE_DIR, 'completions', 'npm-scripts.zsh'),
+  bash: path.join(PACKAGE_DIR, 'completions', 'npm-scripts.bash'),
+  ps1:  path.join(PACKAGE_DIR, 'completions', 'npm-scripts.ps1'),
+};
+
 const MARKER_START = '# >>> npm-scripts-auto-complete >>>';
 const MARKER_END   = '# <<< npm-scripts-auto-complete <<<';
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 function brewPrefix() {
   try {
@@ -23,73 +31,153 @@ function brewPrefix() {
   } catch { return null; }
 }
 
-const brew = brewPrefix();
-
-const ZSH_DIRS = [
-  brew && path.join(brew, 'share/zsh/site-functions'),
-  '/opt/homebrew/share/zsh/site-functions',
-  '/usr/local/share/zsh/site-functions',
-].filter(Boolean);
-
-const BASH_DIRS = [
-  brew && path.join(brew, 'etc/bash_completion.d'),
-  '/opt/homebrew/etc/bash_completion.d',
-  '/usr/local/etc/bash_completion.d',
-  '/etc/bash_completion.d',
-].filter(Boolean);
-
-// --- helpers ---
-
-function findInstalledFile(dirs, name) {
-  for (const dir of dirs) {
-    const p = path.join(dir, name);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-function findWritableDir(dirs) {
-  for (const dir of dirs) {
-    if (!fs.existsSync(dir)) continue;
-    try { fs.accessSync(dir, fs.constants.W_OK); return dir; } catch {}
-  }
-  return null;
-}
-
-function sourceBlock(file) {
-  return `\n${MARKER_START}\nsource "${file}"\n${MARKER_END}\n`;
-}
-
-function getShellConfig(shell) {
+function rcFile(shell) {
   const home = os.homedir();
-  const files = shell === 'zsh'
+  const candidates = shell === 'zsh'
     ? ['.zshrc', '.zprofile']
     : ['.bashrc', '.bash_profile', '.profile'];
-  for (const f of files) {
+  for (const f of candidates) {
     const p = path.join(home, f);
     if (fs.existsSync(p)) return p;
   }
-  return path.join(home, files[0]);
+  return path.join(home, candidates[0]);
 }
 
-// --- commands ---
+function hasMarker(filePath) {
+  if (!fs.existsSync(filePath)) return false;
+  return fs.readFileSync(filePath, 'utf8').includes(MARKER_START);
+}
+
+function removeMarker(filePath) {
+  if (!fs.existsSync(filePath)) return false;
+  const content = fs.readFileSync(filePath, 'utf8');
+  if (!content.includes(MARKER_START)) return false;
+  const cleaned = content.replace(
+    new RegExp(`\\n?${escRe(MARKER_START)}[\\s\\S]*?${escRe(MARKER_END)}\\n?`, 'g'),
+    '\n'
+  );
+  fs.writeFileSync(filePath, cleaned);
+  return true;
+}
+
+function appendWithMarkers(filePath, content) {
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+  if (existing.includes(MARKER_START)) return false;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `\n${MARKER_START}\n${content}\n${MARKER_END}\n`);
+  return true;
+}
+
+function tryCopy(src, destDir, destName) {
+  if (!fs.existsSync(destDir)) return false;
+  try { fs.copyFileSync(src, path.join(destDir, destName)); return true; }
+  catch { return false; }
+}
+
+function tryWrite(destDir, destName, content) {
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(path.join(destDir, destName), content);
+    return true;
+  } catch { return false; }
+}
+
+function escRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getPsProfile() {
+  for (const exe of ['pwsh', 'powershell']) {
+    try {
+      const p = execSync(
+        `${exe} -NoProfile -NonInteractive -Command "$PROFILE"`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      ).trim();
+      if (p) return { exe, path: p };
+    } catch { }
+  }
+  return null;
+}
+
+// ── candidate paths ───────────────────────────────────────────────────────────
+
+function getZshDirs() {
+  const brew = brewPrefix();
+  const home = os.homedir();
+  return [
+    brew && path.join(brew, 'share/zsh/site-functions'),
+    IS_MAC  ? '/opt/homebrew/share/zsh/site-functions' : null,
+    IS_MAC  ? '/usr/local/share/zsh/site-functions'    : null,
+    !IS_MAC ? '/home/linuxbrew/.linuxbrew/share/zsh/site-functions' : null,
+    !IS_MAC ? path.join(home, '.linuxbrew/share/zsh/site-functions') : null,
+    !IS_MAC ? '/usr/local/share/zsh/site-functions'    : null,
+    !IS_MAC ? '/usr/share/zsh/vendor-completions'      : null,
+  ].filter(Boolean);
+}
+
+function getBashDirs() {
+  const brew = brewPrefix();
+  const home = os.homedir();
+  return [
+    brew && path.join(brew, 'etc/bash_completion.d'),
+    IS_MAC  ? '/opt/homebrew/etc/bash_completion.d'    : null,
+    IS_MAC  ? '/usr/local/etc/bash_completion.d'       : null,
+    !IS_MAC ? '/home/linuxbrew/.linuxbrew/etc/bash_completion.d' : null,
+    !IS_MAC ? path.join(home, '.linuxbrew/etc/bash_completion.d') : null,
+    !IS_MAC ? path.join(home, '.local/share/bash-completion/completions') : null,
+    !IS_MAC ? '/etc/bash_completion.d'                 : null,
+  ].filter(Boolean);
+}
+
+// ── commands ──────────────────────────────────────────────────────────────────
 
 function cmdStatus() {
-  const zshFile  = findInstalledFile(ZSH_DIRS, '_npm');
-  const bashFile = findInstalledFile(BASH_DIRS, 'npm-scripts-auto-complete');
-
   console.log('\nnpm-scripts-auto-complete status:\n');
-  console.log(`  zsh  completion: ${zshFile  ? `installed → ${zshFile}`  : 'not found in site-functions'}`);
-  console.log(`  bash completion: ${bashFile ? `installed → ${bashFile}` : 'not found in bash_completion.d'}`);
+  const home = os.homedir();
 
-  // Check fallback rc-file installs
-  for (const shell of ['zsh', 'bash']) {
-    const cfg = getShellConfig(shell);
-    if (fs.existsSync(cfg)) {
-      const content = fs.readFileSync(cfg, 'utf8');
-      if (content.includes(MARKER_START)) {
-        console.log(`  ${shell} fallback:    source line present in ${cfg}`);
-      }
+  if (IS_WIN) {
+    const ps = getPsProfile();
+    if (ps) {
+      const installed = hasMarker(ps.path);
+      console.log(`  PowerShell (${ps.exe}): ${installed ? `installed → ${ps.path}` : `not in ${ps.path}`}`);
+    } else {
+      console.log('  PowerShell: not found');
+    }
+  } else {
+    // zsh — system dirs
+    let zshFile = null;
+    for (const dir of getZshDirs()) {
+      const p = path.join(dir, '_npm');
+      if (fs.existsSync(p)) { zshFile = p; break; }
+    }
+    // zsh — rc fallback
+    const zshUserFile = path.join(home, '.zsh', 'completions', '_npm');
+    const zshRc = rcFile('zsh');
+
+    if (zshFile) {
+      console.log(`  zsh:  installed → ${zshFile}`);
+    } else if (fs.existsSync(zshUserFile) && hasMarker(zshRc)) {
+      console.log(`  zsh:  installed → ${zshUserFile} (sourced from ${zshRc})`);
+    } else if (hasMarker(zshRc)) {
+      console.log(`  zsh:  source line in ${zshRc}`);
+    } else {
+      console.log('  zsh:  not installed');
+    }
+
+    // bash — system dirs
+    let bashFile = null;
+    for (const dir of getBashDirs()) {
+      const p = path.join(dir, 'npm-scripts-auto-complete');
+      if (fs.existsSync(p)) { bashFile = p; break; }
+    }
+    const bashRc = rcFile('bash');
+
+    if (bashFile) {
+      console.log(`  bash: installed → ${bashFile}`);
+    } else if (hasMarker(bashRc)) {
+      console.log(`  bash: source line in ${bashRc}`);
+    } else {
+      console.log('  bash: not installed');
     }
   }
   console.log();
@@ -97,47 +185,73 @@ function cmdStatus() {
 
 function cmdSetup() {
   console.log('\nnpm-scripts-auto-complete manual setup:\n');
+  const home = os.homedir();
   let anyOk = false;
 
-  // Try system dirs first
-  const zshDir  = findWritableDir(ZSH_DIRS);
-  const bashDir = findWritableDir(BASH_DIRS);
-
-  if (zshDir) {
-    fs.copyFileSync(ZSH_SRC, path.join(zshDir, '_npm'));
-    console.log(`  zsh:  copied → ${zshDir}/_npm`);
-    anyOk = true;
-  }
-  if (bashDir) {
-    fs.copyFileSync(BASH_SRC, path.join(bashDir, 'npm-scripts-auto-complete'));
-    console.log(`  bash: copied → ${bashDir}/npm-scripts-auto-complete`);
-    anyOk = true;
-  }
-
-  // Fallback: add source line to rc files
-  if (!zshDir) {
-    const cfg = getShellConfig('zsh');
-    const content = fs.existsSync(cfg) ? fs.readFileSync(cfg, 'utf8') : '';
-    if (!content.includes(MARKER_START)) {
-      fs.appendFileSync(cfg, sourceBlock(ZSH_SRC));
-      console.log(`  zsh:  added source line to ${cfg}`);
-      anyOk = true;
-    } else {
-      console.log(`  zsh:  already in ${cfg}`);
-      anyOk = true;
+  if (IS_WIN) {
+    const ps = getPsProfile();
+    if (!ps) {
+      console.log('  error: PowerShell not found (tried pwsh and powershell)');
+      return;
     }
-  }
-  if (!bashDir) {
-    const cfg = getShellConfig('bash');
-    const content = fs.existsSync(cfg) ? fs.readFileSync(cfg, 'utf8') : '';
-    if (!content.includes(MARKER_START)) {
-      fs.appendFileSync(cfg, sourceBlock(BASH_SRC));
-      console.log(`  bash: added source line to ${cfg}`);
-      anyOk = true;
+    const sourceLine = `. "${COMPLETIONS.ps1.replace(/\\/g, '/')}"`;
+    if (appendWithMarkers(ps.path, sourceLine)) {
+      console.log(`  PowerShell: added to ${ps.path}`);
     } else {
-      console.log(`  bash: already in ${cfg}`);
-      anyOk = true;
+      console.log(`  PowerShell: already in ${ps.path}`);
     }
+    anyOk = true;
+  } else {
+    // zsh
+    let zshDone = false;
+    for (const dir of getZshDirs()) {
+      if (tryCopy(COMPLETIONS.zsh, dir, '_npm')) {
+        console.log(`  zsh:  copied → ${dir}/_npm`);
+        zshDone = true;
+        break;
+      }
+    }
+    if (!zshDone) {
+      const compDir = path.join(home, '.zsh', 'completions');
+      const destFile = path.join(compDir, '_npm');
+      if (tryWrite(compDir, '_npm', fs.readFileSync(COMPLETIONS.zsh, 'utf8'))) {
+        const rc = rcFile('zsh');
+        if (appendWithMarkers(rc, `source "${destFile}"`)) {
+          console.log(`  zsh:  ${destFile} + source line in ${rc}`);
+        } else {
+          console.log(`  zsh:  ${destFile} (already in ${rc})`);
+        }
+        zshDone = true;
+      }
+    }
+    if (zshDone) anyOk = true;
+
+    // bash
+    let bashDone = false;
+    const userBashDir = path.join(home, '.local/share/bash-completion/completions');
+    if (tryWrite(userBashDir, 'npm-scripts-auto-complete', fs.readFileSync(COMPLETIONS.bash, 'utf8'))) {
+      console.log(`  bash: ${userBashDir}/npm-scripts-auto-complete`);
+      bashDone = true;
+    }
+    if (!bashDone) {
+      for (const dir of getBashDirs()) {
+        if (tryCopy(COMPLETIONS.bash, dir, 'npm-scripts-auto-complete')) {
+          console.log(`  bash: copied → ${dir}/npm-scripts-auto-complete`);
+          bashDone = true;
+          break;
+        }
+      }
+    }
+    if (!bashDone) {
+      const rc = rcFile('bash');
+      if (appendWithMarkers(rc, `source "${COMPLETIONS.bash}"`)) {
+        console.log(`  bash: source line added to ${rc}`);
+      } else {
+        console.log(`  bash: already in ${rc}`);
+      }
+      bashDone = true;
+    }
+    if (bashDone) anyOk = true;
   }
 
   if (anyOk) {
@@ -147,36 +261,50 @@ function cmdSetup() {
 
 function cmdUninstall() {
   console.log('\nRemoving npm-scripts-auto-complete:\n');
+  const home = os.homedir();
+  let anyRemoved = false;
 
-  // Remove from system dirs
-  const zshFile  = findInstalledFile(ZSH_DIRS, '_npm');
-  const bashFile = findInstalledFile(BASH_DIRS, 'npm-scripts-auto-complete');
+  if (IS_WIN) {
+    const ps = getPsProfile();
+    if (ps && removeMarker(ps.path)) {
+      console.log(`  removed source block from ${ps.path}`);
+      anyRemoved = true;
+    }
+  } else {
+    // zsh — system dirs
+    for (const dir of getZshDirs()) {
+      const p = path.join(dir, '_npm');
+      if (fs.existsSync(p)) {
+        try { fs.unlinkSync(p); console.log(`  removed: ${p}`); anyRemoved = true; } catch { }
+      }
+    }
+    // zsh — user file + rc marker
+    const zshUserFile = path.join(home, '.zsh', 'completions', '_npm');
+    if (fs.existsSync(zshUserFile)) {
+      try { fs.unlinkSync(zshUserFile); console.log(`  removed: ${zshUserFile}`); anyRemoved = true; } catch { }
+    }
+    if (removeMarker(rcFile('zsh'))) {
+      console.log(`  removed source block from ${rcFile('zsh')}`);
+      anyRemoved = true;
+    }
 
-  if (zshFile)  { fs.unlinkSync(zshFile);  console.log(`  removed: ${zshFile}`); }
-  if (bashFile) { fs.unlinkSync(bashFile); console.log(`  removed: ${bashFile}`); }
-
-  // Remove fallback rc source lines
-  for (const shell of ['zsh', 'bash']) {
-    const cfg = getShellConfig(shell);
-    if (!fs.existsSync(cfg)) continue;
-    const content = fs.readFileSync(cfg, 'utf8');
-    if (!content.includes(MARKER_START)) continue;
-    const cleaned = content.replace(
-      new RegExp(`\\n?${escRe(MARKER_START)}[\\s\\S]*?${escRe(MARKER_END)}\\n?`, 'g'),
-      '\n'
-    );
-    fs.writeFileSync(cfg, cleaned);
-    console.log(`  removed source line from ${cfg}`);
+    // bash — all known dirs
+    for (const dir of getBashDirs()) {
+      const p = path.join(dir, 'npm-scripts-auto-complete');
+      if (fs.existsSync(p)) {
+        try { fs.unlinkSync(p); console.log(`  removed: ${p}`); anyRemoved = true; } catch { }
+      }
+    }
+    if (removeMarker(rcFile('bash'))) {
+      console.log(`  removed source block from ${rcFile('bash')}`);
+      anyRemoved = true;
+    }
   }
 
-  if (!zshFile && !bashFile) {
+  if (!anyRemoved) {
     console.log('  nothing to remove');
   }
   console.log('\nDone. Restart your terminal.\n');
-}
-
-function escRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function printHelp() {
@@ -195,7 +323,8 @@ Commands:
 `);
 }
 
-// --- main ---
+// ── main ──────────────────────────────────────────────────────────────────────
+
 switch (process.argv[2] || 'help') {
   case 'status':    cmdStatus();    break;
   case 'setup':     cmdSetup();     break;

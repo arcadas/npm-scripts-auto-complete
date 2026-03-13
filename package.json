@@ -11,7 +11,11 @@
     "bash",
     "tab-completion",
     "cli",
-    "macos"
+    "macos",
+    "linux",
+    "windows",
+    "powershell",
+    "yarn"
   ],
   "author": "Peter Perger <perger1984@gmail.com>",
   "license": "MIT",
