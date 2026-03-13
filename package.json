@@ -1,6 +1,6 @@
 {
   "name": "npm-scripts-auto-complete",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Zero-config shell tab-completion for `npm run` scripts, auto-installed from package.json",
   "keywords": [
     "npm",
